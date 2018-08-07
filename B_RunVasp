@@ -1,0 +1,145 @@
+#!/bin/bash
+  ####################################
+  #SBATCH --time=03:00:00   # walltime
+  #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
+  #SBATCH --nodes=1   # number of nodes
+  #SBATCH --mem-per-cpu=1024M   # memory per CPU core
+  #SBATCH -J "B_RunVasp"   # job name
+  #SBATCH --mail-user=carlos.leon.chinchay@gmail.com   # email address
+  #SBATCH --mail-type=FAIL
+  # LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
+  module purge
+  module load mpi/openmpi-1.8.5_intel-15.0.2
+  module switch compiler_intel/15.0.2 compiler_intel/2017
+
+####@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+####           I should be in the scriptsCoNiTi/ folder
+####@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+################################################################################
+# paths
+################################################################################
+scriptsFolder=$PWD
+cd ..
+workDir=$PWD
+echo "working folder is " $workDir
+
+################################################################################
+# Preparing files and folders for VASP
+################################################################################
+cd  $workDir/5_afterActiveLearning/
+rm -r justPOSCARs/  # created in previous step
+rm -r runVasp/      # created in previous step
+mkdir justPOSCARs/
+mkdir runVasp/
+
+mv  $workDir/2_myTraining/POSCAR*  justPOSCARs/
+echo "POSCARs relocated ..."
+
+cd justPOSCARs/
+pathJustPoscars=$PWD
+
+ls > foldersToCreate
+fileWithFolderNames=$pathJustPoscars/foldersToCreate
+
+# in the first line, the name "foldersToCreate" was also displayed, so
+# I cut the first line:
+sed -i '1d' foldersToCreate
+
+################################################################################
+# we are in justPOSCARs folder!
+while IFS= read -r line
+do
+
+mkdir ../runVasp/$line/
+cd    ../runVasp/$line/
+
+#-------------------------------------------------------------------------------
+cat > "prepareFolder" << FINPREPARE
+#!/bin/bash
+####################################
+#SBATCH --time=00:15:00   # walltime
+#SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
+#SBATCH --nodes=1   # number of nodes
+#SBATCH --mem-per-cpu=1024M   # memory per CPU core
+#SBATCH -J "pre_$line"   # job name
+#SBATCH --mail-user=carlos.leon.chinchay@gmail.com   # email address
+#SBATCH --mail-type=FAIL
+# LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
+module purge
+module load mpi/openmpi-1.8.5_intel-15.0.2
+module switch compiler_intel/15.0.2 compiler_intel/2017
+
+  echo "PREPARING FILES FOR FOLDER = " $line  
+  cp $line                                 POSCAR
+  cp $scriptsFolder/CARS/*                 . # << copy INCAR and PRECALC.
+  cp $scriptsFolder/getKPoints             .
+  cp $scriptsFolder/vaspPotcars/Co/POTCAR  Co_POTCAR
+  cp $scriptsFolder/vaspPotcars/Ni/POTCAR  Ni_POTCAR
+  cp $scriptsFolder/vaspPotcars/Ti/POTCAR  Ti_POTCAR
+
+  # a.out is compiled from fixingPOSCARs.cpp to fix the POSCAR and get a POTCAR.
+  cp $scriptsFolder/a.out  .
+
+  ./getKPoints
+  cp POSCAR backupPOSCAR
+  ./a.out  # fix the POSCAR (without 0 occupation)
+           # and get a suitable POTCAR for VASP
+  mv fixedPOSCAR POSCAR
+  pwd
+####################################
+FINPREPARE
+
+#-------------------------------------------------------------------------------
+cat > "jobVasp" << FINJOBVASP
+#!/bin/bash
+####################################
+#SBATCH --time=04:00:00   # walltime
+#SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
+#SBATCH --nodes=1   # number of nodes
+#SBATCH --mem-per-cpu=3072M   # memory per CPU core
+#SBATCH -J "xVASP_$line"   # job name
+#SBATCH --mail-user=carlos.leon.chinchay@gmail.com   # email address
+#SBATCH --mail-type=FAIL
+# LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
+module purge
+module load mpi/openmpi-1.8.5_intel-15.0.2
+module switch compiler_intel/15.0.2 compiler_intel/2017
+/fslhome/glh43/bin/vasp54s
+####################################
+FINJOBVASP
+
+#-------------------------------------------------------------------------------
+cat > "prepareAndVasp.sh" << FINRUN
+#!/bin/bash
+####################################
+sbatch --dependency=singleton --job-name=Group_$line prepareFolder
+sbatch --dependency=singleton --job-name=Group_$line jobVasp
+####################################
+FINRUN
+chmod +x prepareAndVasp.sh  #gives permission to run
+
+#-------------------------------------------------------------------------------
+  cd $pathJustPoscars   #return to justPOSCARs folder!
+
+#-------------------------------------------------------------------------------  
+done <"$fileWithFolderNames"
+
+
+
+###############################################################################
+# sending to queue
+###############################################################################
+# BEING IN  ../runVasp/$line/   !!!!
+while IFS= read -r line
+do
+  cd    ../runVasp/$line/
+  #sh prepareAndVasp.sh
+  echo $PWD
+  cd $pathJustPoscars   #return to justPOSCARs folder! (is it a necessary step?)
+done <"$fileWithFolderNames"
+###############################################################################
+
+## I cannot continue. You must wait till 200 jobs have finished.
+##
+####################################
